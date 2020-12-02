@@ -7,7 +7,7 @@ import mlp.data_providers as data_providers
 from pytorch_mlp_framework.arg_extractor import get_args
 from pytorch_mlp_framework.experiment_builder import ExperimentBuilder
 from pytorch_mlp_framework.model_architectures import *
-import os 
+# import os
 # os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
 args = get_args()  # get arguments from command line
@@ -47,12 +47,12 @@ if args.block_type == 'conv_block':
 elif args.block_type == 'empty_block':
     processing_block_type = EmptyBlock
     dim_reduction_block_type = EmptyBlock
-elif args.block_type == 'dense_block':
-    processing_block_type = DenseBlock
-    dim_reduction_block_type = TransitionLayer
-elif args.block_type == "dense_block_double":
-    processing_block_type = DenseBlockDouble
-    dim_reduction_block_type = TransitionLayer
+elif args.block_type == 'resi_block':
+    processing_block_type = ConvolutionalProcessingBlock_Residual_BN
+    dim_reduction_block_type = ConvolutionalDimensionalityReductionBlock_Residual_BN
+elif args.block_type == 'resi_proj_block':
+    processing_block_type = ConvolutionalProcessingBlock_Residual_BN
+    dim_reduction_block_type = ConvolutionalDimensionalityReductionBlock_Residual_BN_Projection
 else:
     raise ModuleNotFoundError
 
@@ -71,4 +71,6 @@ conv_experiment = ExperimentBuilder(network_model=custom_conv_net,
                                     continue_from_epoch=args.continue_from_epoch,
                                     train_data=train_data_loader, val_data=val_data_loader,
                                     test_data=test_data_loader)  # build an experiment object
+
 experiment_metrics, test_metrics = conv_experiment.run_experiment()  # run experiment and return experiment metrics
+
