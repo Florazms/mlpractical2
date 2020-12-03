@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
 
 
 class FCCNetwork(nn.Module):
@@ -238,6 +237,157 @@ class ConvolutionalDimensionalityReductionBlock(nn.Module):
         return out
 
 
+class DenseBlock(nn.Module):
+    def __init__(self, input_shape, num_filters, kernel_size, padding, bias, dilation, num_blocks_per_stage):
+        super(DenseBlock, self).__init__()
+
+        self.num_filters = num_filters
+        self.kernel_size = kernel_size
+        self.input_shape = input_shape
+        self.padding = padding
+        self.bias = bias
+        self.dilation = dilation
+        self.num_blocks_per_stage = num_blocks_per_stage
+
+        self.build_module()
+
+    def build_module(self):
+        self.layer_dict = nn.ModuleDict()
+        x = torch.zeros(self.input_shape)
+        out = x
+
+        for i in range(self.num_blocks_per_stage, 0, -1):
+            in_channels = out.shape[1]
+            j = self.num_blocks_per_stage-i
+
+            self.layer_dict['bn_{}'.format(j)] = nn.BatchNorm2d(num_features=in_channels)
+            intermediate_out = self.layer_dict['bn_{}'.format(j)](out)
+            intermediate_out = F.relu(intermediate_out)
+            self.layer_dict['conv_{}'.format(j)] = nn.Conv2d(in_channels=in_channels, out_channels=self.num_filters, bias=self.bias, kernel_size=self.kernel_size, dilation=self.dilation, padding=self.padding, stride=1)
+            if i == 1:
+                out = self.layer_dict['conv_{}'.format(j)](intermediate_out)
+            else:
+                out = torch.cat((out, self.layer_dict['conv_{}'.format(j)](intermediate_out)), 1)
+
+        print(out.shape)
+
+    def forward(self, x, num_blocks_per_stage):
+        out = x
+        # print("dense shape in", out.shape)
+
+        for i in range(self.num_blocks_per_stage, 0, -1):
+            in_channels = out.shape[1]
+            j = self.num_blocks_per_stage-i
+
+            intermediate_out = self.layer_dict['bn_{}'.format(j)](out)
+            intermediate_out = F.relu(intermediate_out)
+            if i == 1:
+                out = self.layer_dict['conv_{}'.format(j)](intermediate_out)
+            else:
+                out = torch.cat((out, self.layer_dict['conv_{}'.format(j)](intermediate_out)), 1)
+        # print("dense shape out", out.shape)
+        return out
+
+
+class DenseBlockDouble(nn.Module):
+    def __init__(self, input_shape, num_filters, kernel_size, padding, bias, dilation, num_blocks_per_stage):
+        super(DenseBlockDouble, self).__init__()
+
+        self.num_filters = num_filters
+        self.kernel_size = kernel_size
+        self.input_shape = input_shape
+        self.padding = padding
+        self.bias = bias
+        self.dilation = dilation
+        self.num_blocks_per_stage = num_blocks_per_stage
+
+        self.build_module()
+
+    def build_module(self):
+        self.layer_dict = nn.ModuleDict()
+        x = torch.zeros(self.input_shape)
+        out = x
+
+        for i in range(self.num_blocks_per_stage, 0, -1):
+            in_channels = out.shape[1]
+            j = self.num_blocks_per_stage-i
+
+            self.layer_dict['bn_{}_0'.format(j)] = nn.BatchNorm2d(num_features=in_channels)
+            intermediate_out = self.layer_dict['bn_{}_0'.format(j)](out)
+            intermediate_out = F.relu(intermediate_out)
+            self.layer_dict['conv_1x1_{}'.format(j)] = nn.Conv2d(in_channels=in_channels, out_channels=self.num_filters, bias=self.bias, kernel_size=1, dilation=self.dilation, padding=self.padding, stride=1)
+            intermediate_out = self.layer_dict['conv_1x1_{}'.format(j)](intermediate_out)
+            self.layer_dict['bn_{}_1'.format(j)] = nn.BatchNorm2d(num_features=in_channels)
+            intermediate_out = self.layer_dict['bn_{}_1'.format(j)](intermediate_out)
+            intermediate_out = F.relu(intermediate_out)
+            self.layer_dict['conv_3x3_{}'.format(j)] = nn.Conv2d(in_channels=in_channels, out_channels=self.num_filters, bias=self.bias, kernel_size=3, dilation=self.dilation, padding=self.padding, stride=1)
+
+            if i == 1:
+                out = self.layer_dict['conv_3x3_{}'.format(j)](intermediate_out)
+            else:
+                out = torch.cat((out, self.layer_dict['conv_3x3_{}'.format(j)](intermediate_out)), 1)
+
+        print(out.shape)
+
+    def forward(self, x, num_blocks_per_stage):
+        out = x
+        # print("dense shape in", out.shape)
+
+        for i in range(self.num_blocks_per_stage, 0, -1):
+            in_channels = out.shape[1]
+            j = self.num_blocks_per_stage-i
+
+            intermediate_out = self.layer_dict['bn_{}_0'.format(j)](out)
+            intermediate_out = F.relu(intermediate_out)
+            intermediate_out = self.layer_dict['conv_1x1_{}'.format(j)](intermediate_out)
+            intermediate_out = self.layer_dict['bn_{}_1'.format(j)](intermediate_out)
+            intermediate_out = F.relu(intermediate_out)
+
+            if i == 1:
+                out = self.layer_dict['conv_3x3_{}'.format(j)](intermediate_out)
+            else:
+                out = torch.cat((out, self.layer_dict['conv_3x3_{}'.format(j)](intermediate_out)), 1)
+        # print("dense shape out", out.shape)
+        return out
+
+
+class TransitionLayer(nn.Module):
+    def __init__(self, input_shape, num_filters, kernel_size, padding, bias, dilation, reduction_factor):
+        super(TransitionLayer, self).__init__()
+
+        self.num_filters = num_filters
+        self.kernel_size = kernel_size
+        self.input_shape = input_shape
+        self.padding = padding
+        self.bias = bias
+        self.dilation = dilation
+        self.reduction_factor = reduction_factor
+        self.build_module()
+
+    def build_module(self):
+        self.layer_dict = nn.ModuleDict()
+        x = torch.zeros(self.input_shape)
+        out = x
+        in_channels = out.shape[1]
+
+        self.layer_dict['bn_0'] = nn.BatchNorm2d(num_features=in_channels, track_running_stats=False)
+        out = self.layer_dict['bn_0'](out)
+
+        out = F.avg_pool2d(out, 2)
+
+        print(out.shape)
+
+    def forward(self, x):
+        out = x
+        # print("  trans shape in", out.shape)
+
+        out = self.layer_dict['bn_0'].forward(out)
+        out = F.avg_pool2d(out, 2)
+
+        # print("  trans shape out", out.shape)
+        return out
+
+
 class ConvolutionalNetwork(nn.Module):
     def __init__(self, input_shape, num_output_classes, num_filters,
                  num_blocks_per_stage, num_stages, use_bias=False, processing_block_type=ConvolutionalProcessingBlock,
@@ -285,19 +435,18 @@ class ConvolutionalNetwork(nn.Module):
         out = self.layer_dict['input_conv'].forward(out)
         # torch.nn.Conv2d(in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=True)
         for i in range(self.num_stages):  # for number of layers times
-            for j in range(self.num_blocks_per_stage):
-                self.layer_dict['block_{}_{}'.format(i, j)] = self.processing_block_type(input_shape=out.shape,
-                                                                                         num_filters=self.num_filters,
-                                                                                         bias=self.use_bias,
-                                                                                         kernel_size=3, dilation=1,
-                                                                                         padding=1)
-                out = self.layer_dict['block_{}_{}'.format(i, j)].forward(out)
-            self.layer_dict['reduction_block_{}'.format(i)] = self.dimensionality_reduction_block_type(
-                input_shape=out.shape,
-                num_filters=self.num_filters, bias=True,
-                kernel_size=3, dilation=1,
-                padding=1,
-                reduction_factor=2)
+            if self.processing_block_type in [DenseBlock, DenseBlockDouble]:
+                # self.layer_dict['dense_block_{}'.format(i)] = self.processing_block_type(input_shape=out.shape, num_filters=int(self.num_filters*(0.5**i)), bias=self.use_bias, kernel_size=3, dilation=1, padding=1, num_blocks_per_stage=self.num_blocks_per_stage)
+                self.layer_dict['dense_block_{}'.format(i)] = self.processing_block_type(input_shape=out.shape, num_filters=self.num_filters, bias=self.use_bias, kernel_size=3, dilation=1, padding=1, num_blocks_per_stage=self.num_blocks_per_stage)
+                out = self.layer_dict['dense_block_{}'.format(i)].forward(out, self.num_blocks_per_stage)
+            else:
+                for j in range(self.num_blocks_per_stage):
+                    self.layer_dict['block_{}_{}'.format(i, j)] = self.processing_block_type(input_shape=out.shape, num_filters=self.num_filters, bias=self.use_bias, kernel_size=3, dilation=1, padding=1)
+                    out = self.layer_dict['block_{}_{}'.format(i, j)].forward(out)
+            # if self.processing_block_type == DenseBlock:
+                # self.layer_dict['reduction_block_{}'.format(i)] = self.dimensionality_reduction_block_type(input_shape=out.shape, num_filters=int(self.num_filters*(0.5**i)), bias=True, kernel_size=3, dilation=1, padding=1, reduction_factor=2)
+            # else:
+            self.layer_dict['reduction_block_{}'.format(i)] = self.dimensionality_reduction_block_type(input_shape=out.shape, num_filters=self.num_filters, bias=True, kernel_size=3, dilation=1, padding=1, reduction_factor=2)
             out = self.layer_dict['reduction_block_{}'.format(i)].forward(out)
 
         out = F.avg_pool2d(out, out.shape[-1])
@@ -319,8 +468,11 @@ class ConvolutionalNetwork(nn.Module):
         out = x
         out = self.layer_dict['input_conv'].forward(out)
         for i in range(self.num_stages):  # for number of layers times
-            for j in range(self.num_blocks_per_stage):
-                out = self.layer_dict['block_{}_{}'.format(i, j)].forward(out)
+            if self.processing_block_type in [DenseBlock, DenseBlockDouble]:
+                out = self.layer_dict['dense_block_{}'.format(i)].forward(out, self.num_blocks_per_stage)
+            else:
+                for j in range(self.num_blocks_per_stage):
+                    out = self.layer_dict['block_{}_{}'.format(i, j)].forward(out)
             out = self.layer_dict['reduction_block_{}'.format(i)].forward(out)
 
         out = F.avg_pool2d(out, out.shape[-1])
@@ -339,173 +491,3 @@ class ConvolutionalNetwork(nn.Module):
                 pass
 
         self.logit_linear_layer.reset_parameters()
-
-class ConvolutionalProcessingBlock_Residual_BN(nn.Module):
-    def __init__(self, input_shape, num_filters, kernel_size, padding, bias, dilation):
-        super(ConvolutionalProcessingBlock_Residual_BN, self).__init__()
-
-        self.num_filters = num_filters
-        self.kernel_size = kernel_size
-        self.input_shape = input_shape
-        self.padding = padding
-        self.bias = bias
-        self.dilation = dilation
-
-        self.build_module()
-
-    def build_module(self):
-        self.layer_dict = nn.ModuleDict()
-        x = torch.zeros(self.input_shape)
-        identity = x
-        out = x
-
-        self.layer_dict['conv_0'] = nn.Conv2d(in_channels=out.shape[1], out_channels=self.num_filters, bias=self.bias,
-                                              kernel_size=self.kernel_size, dilation=self.dilation,
-                                              padding=self.padding, stride=1)
-        out = self.layer_dict['conv_0'].forward(out)
-
-        self.layer_dict['bn_0'] = nn.BatchNorm2d(num_features=out.shape[1])
-        out = F.leaky_relu(self.layer_dict['bn_0'].forward(out))
-
-        self.layer_dict['conv_1'] = nn.Conv2d(in_channels=out.shape[1], out_channels=self.num_filters, bias=self.bias,
-                                              kernel_size=self.kernel_size, dilation=self.dilation,
-                                              padding=self.padding, stride=1)
-        out = self.layer_dict['conv_1'].forward(out)
-
-        self.layer_dict['bn_1'] = nn.BatchNorm2d(num_features=out.shape[1])
-        out = F.leaky_relu(self.layer_dict['bn_1'].forward(out + identity))
-
-        print(out.shape)
-
-    def forward(self, x):
-        identity = x
-
-        out = x
-        out = self.layer_dict['conv_0'].forward(out)
-        out = F.leaky_relu(self.layer_dict['bn_0'].forward(out))
-
-        out = self.layer_dict['conv_1'].forward(out)
-        out = F.leaky_relu(self.layer_dict['bn_1'].forward(out + identity))
-
-        return out
-
-class ConvolutionalDimensionalityReductionBlock_Residual_BN(nn.Module):
-    def __init__(self, input_shape, num_filters, kernel_size, padding, bias, dilation, reduction_factor):
-        super(ConvolutionalDimensionalityReductionBlock_Residual_BN, self).__init__()
-
-        self.num_filters = num_filters
-        self.kernel_size = kernel_size
-        self.input_shape = input_shape
-        self.padding = padding
-        self.bias = bias
-        self.dilation = dilation
-        self.reduction_factor = reduction_factor
-        self.build_module()
-
-    def build_module(self):
-        self.layer_dict = nn.ModuleDict()
-        x = torch.zeros(self.input_shape)
-        identity = x
-        out = x
-
-        self.layer_dict['conv_0'] = nn.Conv2d(in_channels=out.shape[1], out_channels=self.num_filters, bias=self.bias,
-                                              kernel_size=self.kernel_size, dilation=self.dilation,
-                                              padding=self.padding, stride=1)
-        out = self.layer_dict['conv_0'].forward(out)
-
-        self.layer_dict['bn_0'] = nn.BatchNorm2d(num_features=out.shape[1])
-        out = F.leaky_relu(self.layer_dict['bn_0'].forward(out))
-
-        out = F.avg_pool2d(out, self.reduction_factor)
-
-        self.layer_dict['conv_1'] = nn.Conv2d(in_channels=out.shape[1], out_channels=self.num_filters, bias=self.bias,
-                                              kernel_size=self.kernel_size, dilation=self.dilation,
-                                              padding=self.padding, stride=1)
-        out = self.layer_dict['conv_1'].forward(out)
-
-        self.layer_dict['bn_1'] = nn.BatchNorm2d(num_features=out.shape[1])
-        out = F.leaky_relu(self.layer_dict['bn_1'].forward(out + F.avg_pool2d(identity, self.reduction_factor)))
-
-        print(out.shape)
-
-    def forward(self, x):
-        out = x
-        identity = x
-
-        out = self.layer_dict['conv_0'].forward(out)
-        out = F.leaky_relu(self.layer_dict['bn_0'].forward(out))
-
-        out = F.avg_pool2d(out, self.reduction_factor)
-
-        out = self.layer_dict['conv_1'].forward(out)
-        out = F.leaky_relu(self.layer_dict['bn_1'].forward(out + F.avg_pool2d(identity, self.reduction_factor)))
-
-        return out
-
-class ConvolutionalDimensionalityReductionBlock_Residual_BN_Projection(nn.Module):
-    def __init__(self, input_shape, num_filters, kernel_size, padding, bias, dilation, reduction_factor):
-        super(ConvolutionalDimensionalityReductionBlock_Residual_BN_Projection, self).__init__()
-
-        self.num_filters = num_filters
-        self.kernel_size = kernel_size
-        self.input_shape = input_shape
-        self.padding = padding
-        self.bias = bias
-        self.dilation = dilation
-        self.reduction_factor = reduction_factor
-        self.build_module()
-
-    def build_module(self):
-        self.layer_dict = nn.ModuleDict()
-        x = torch.zeros(self.input_shape)
-        identity = x
-        out = x
-
-        self.layer_dict['conv_0'] = nn.Conv2d(in_channels=out.shape[1], out_channels=self.num_filters, bias=self.bias,
-                                              kernel_size=self.kernel_size, dilation=self.dilation,
-                                              padding=self.padding, stride=1)
-        out = self.layer_dict['conv_0'].forward(out)
-
-        self.layer_dict['bn_0'] = nn.BatchNorm2d(num_features=out.shape[1])
-        out = F.leaky_relu(self.layer_dict['bn_0'].forward(out))
-
-        out = F.avg_pool2d(out, self.reduction_factor)
-
-        self.layer_dict['conv_1'] = nn.Conv2d(in_channels=out.shape[1], out_channels=self.num_filters, bias=self.bias,
-                                              kernel_size=self.kernel_size, dilation=self.dilation,
-                                              padding=self.padding, stride=1)
-        out = self.layer_dict['conv_1'].forward(out)
-
-        self.layer_dict['bn_1'] = nn.BatchNorm2d(num_features=out.shape[1])
-
-        # this layer is for projection
-        # self.layer_dict['conv_2'] = nn.Conv2d(in_channels=identity.shape[1], out_channels=self.num_filters, bias=self.bias,
-        #                                       kernel_size=1, dilation=1,
-        #                                       padding=0, stride=self.reduction_factor)
-        identity = identity.view(identity.shape[0], identity.shape[1], -1)
-        self.layer_dict['linear'] = nn.Linear(in_features=identity.shape[-1], out_features=identity.shape[-1]//4, bias=False)
-        identity = self.layer_dict['linear'].forward(identity)
-        identity = identity.view(identity.shape[0], identity.shape[1], int(np.sqrt(identity.shape[2])), int(np.sqrt(identity.shape[2])))
-
-        out = F.leaky_relu(self.layer_dict['bn_1'].forward(out + identity))
-
-
-        print(out.shape)
-
-    def forward(self, x):
-        out = x
-        identity = x
-        identity = identity.view(identity.shape[0], identity.shape[1], -1)
-        identity = self.layer_dict['linear'].forward(identity)
-        identity = identity.view(identity.shape[0], identity.shape[1], int(np.sqrt(identity.shape[2])),
-                                 int(np.sqrt(identity.shape[2])))
-
-        out = self.layer_dict['conv_0'].forward(out)
-        out = F.leaky_relu(self.layer_dict['bn_0'].forward(out))
-
-        out = F.avg_pool2d(out, self.reduction_factor)
-
-        out = self.layer_dict['conv_1'].forward(out)
-        out = F.leaky_relu(self.layer_dict['bn_1'].forward(out + identity))
-
-        return out
